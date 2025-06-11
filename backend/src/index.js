@@ -1247,6 +1247,354 @@ app.delete('/api/ai-connections/:id', auth.authenticateToken, (req, res) => {
   });
 });
 
+// MCP Server APIs
+console.log('🔧 Registering MCP Server APIs...');
+
+app.get('/api/mcp/servers', auth.authenticateToken, (req, res) => {
+  console.log('📡 GET /api/mcp/servers called by user:', req.user?.id);
+  
+  // Ensure table exists first
+  createMCPServersTable(() => {
+    db.all(`
+      SELECT * FROM mcp_servers 
+      ORDER BY created_at DESC
+    `, [], (err, servers) => {
+      if (err) {
+        console.error('❌ Error fetching MCP servers:', err.message);
+        logger.error('Error fetching MCP servers', { error: err.message });
+        return res.status(500).json({ error: 'Fehler beim Laden der MCP Server' });
+      }
+      
+      console.log(`✅ Found ${servers.length} MCP servers`);
+      
+      // Parse config JSON and format response
+      const formattedServers = servers.map(server => ({
+        id: server.id,
+        name: server.name,
+        type: server.type,
+        status: server.status || 'disconnected',
+        config: JSON.parse(server.config || '{}'),
+        capabilities: server.capabilities ? JSON.parse(server.capabilities) : {},
+        created_at: server.created_at
+      }));
+      
+      res.json({ success: true, servers: formattedServers });
+    });
+  });
+});
+
+app.post('/api/mcp/servers', auth.authenticateToken, (req, res) => {
+  console.log('📡 POST /api/mcp/servers called by user:', req.user?.id);
+  console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
+  
+  const { name, type, config } = req.body;
+  
+  if (!name || !type || !config) {
+    console.log('❌ Missing required fields:', { name: !!name, type: !!type, config: !!config });
+    return res.status(400).json({ error: 'Name, Typ und Konfiguration sind erforderlich' });
+  }
+
+  // Validate config based on type
+  if (type === 'stdio' && (!config.command || !Array.isArray(config.command))) {
+    console.log('❌ Invalid STDIO config:', config);
+    return res.status(400).json({ error: 'STDIO Server benötigt ein command Array' });
+  }
+  
+  if ((type === 'sse' || type === 'http-stream') && !config.endpoint) {
+    console.log('❌ Invalid SSE/HTTP-stream config:', config);
+    return res.status(400).json({ error: `${type} Server benötigt eine endpoint URL` });
+  }
+  
+  // Ensure table exists first
+  createMCPServersTable(() => {
+    const configJson = JSON.stringify(config);
+    console.log('💾 Saving MCP server to database...');
+    
+    db.run(`
+      INSERT INTO mcp_servers (name, type, config, status, created_at) 
+      VALUES (?, ?, ?, 'disconnected', datetime('now'))
+    `, [name, type, configJson], function(err) {
+      if (err) {
+        console.error('❌ Error creating MCP server:', err.message);
+        logger.error('Error creating MCP server', { error: err.message });
+        return res.status(500).json({ error: 'Fehler beim Erstellen des MCP Servers' });
+      }
+      
+      console.log('✅ MCP server created with ID:', this.lastID);
+      
+      // Get the created server
+      db.get('SELECT * FROM mcp_servers WHERE id = ?', [this.lastID], (err, server) => {
+        if (err) {
+          console.error('❌ Error fetching created MCP server:', err.message);
+          logger.error('Error fetching created MCP server', { error: err.message });
+          return res.status(500).json({ error: 'MCP Server erstellt, aber Fehler beim Laden' });
+        }
+        
+        const formattedServer = {
+          id: server.id,
+          name: server.name,
+          type: server.type,
+          status: server.status || 'disconnected',
+          config: JSON.parse(server.config || '{}'),
+          capabilities: server.capabilities ? JSON.parse(server.capabilities) : {},
+          created_at: server.created_at
+        };
+        
+        console.log('📤 Sending response:', JSON.stringify(formattedServer, null, 2));
+        logger.info('MCP server created', { server_id: server.id, name: server.name });
+        res.json({ success: true, server: formattedServer });
+      });
+    });
+  });
+});
+
+app.post('/api/mcp/servers/:id/connect', auth.authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  
+  db.get('SELECT * FROM mcp_servers WHERE id = ?', [id], async (err, server) => {
+    if (err) {
+      logger.error('Error fetching MCP server for connection', { error: err.message });
+      return res.status(500).json({ error: 'Fehler beim Laden des Servers' });
+    }
+    
+    if (!server) {
+      return res.status(404).json({ error: 'Server nicht gefunden' });
+    }
+    
+    try {
+      const config = JSON.parse(server.config || '{}');
+      let connected = false;
+      let capabilities = {};
+      
+      // Test connection based on server type
+      if (server.type === 'stdio') {
+        // For STDIO servers, we can't really test connection without starting the process
+        // Just mark as connected for now
+        connected = true;
+        capabilities = { tools: [], resources: [] };
+      } else if (server.type === 'sse' || server.type === 'http-stream') {
+        // Test HTTP-based connections
+        try {
+          const response = await fetch(`${config.endpoint}/capabilities`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            capabilities = await response.json();
+            connected = true;
+          }
+        } catch (error) {
+          // If capabilities endpoint doesn't work, try basic connection test
+          try {
+            const response = await fetch(config.endpoint);
+            connected = response.ok || response.status < 500;
+            capabilities = { tools: [], resources: [] };
+          } catch (e) {
+            connected = false;
+          }
+        }
+      }
+      
+      // Update server status
+      db.run('UPDATE mcp_servers SET status = ?, capabilities = ? WHERE id = ?', 
+        [connected ? 'connected' : 'error', JSON.stringify(capabilities), id], (err) => {
+        if (err) {
+          logger.error('Error updating server status', { error: err.message });
+        }
+      });
+      
+      logger.info('MCP server connection tested', { server_id: id, connected });
+      res.json({ success: true, connected, capabilities });
+      
+    } catch (error) {
+      logger.error('Error testing MCP server connection', { error: error.message, server_id: id });
+      res.json({ success: true, connected: false, capabilities: {} });
+    }
+  });
+});
+
+app.post('/api/mcp/servers/:id/disconnect', auth.authenticateToken, (req, res) => {
+  const { id } = req.params;
+  
+  db.run('UPDATE mcp_servers SET status = ? WHERE id = ?', ['disconnected', id], function(err) {
+    if (err) {
+      logger.error('Error disconnecting MCP server', { error: err.message, server_id: id });
+      return res.status(500).json({ error: 'Fehler beim Trennen des Servers' });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Server nicht gefunden' });
+    }
+    
+    logger.info('MCP server disconnected', { server_id: id });
+    res.json({ success: true });
+  });
+});
+
+app.get('/api/mcp/servers/:id/tools', auth.authenticateToken, (req, res) => {
+  const { id } = req.params;
+  
+  db.get('SELECT * FROM mcp_servers WHERE id = ?', [id], (err, server) => {
+    if (err) {
+      logger.error('Error fetching MCP server for tools', { error: err.message });
+      return res.status(500).json({ error: 'Fehler beim Laden des Servers' });
+    }
+    
+    if (!server) {
+      return res.status(404).json({ error: 'Server nicht gefunden' });
+    }
+    
+    try {
+      const capabilities = JSON.parse(server.capabilities || '{}');
+      const tools = capabilities.tools || [];
+      
+      logger.info('Tools fetched for MCP server', { server_id: id, tool_count: tools.length });
+      res.json({ success: true, tools });
+      
+    } catch (error) {
+      logger.error('Error parsing server capabilities', { error: error.message, server_id: id });
+      res.json({ success: true, tools: [] });
+    }
+  });
+});
+
+app.post('/api/mcp/servers/:id/tools/:toolName/call', auth.authenticateToken, async (req, res) => {
+  const { id, toolName } = req.params;
+  const { arguments: toolArgs } = req.body;
+  
+  db.get('SELECT * FROM mcp_servers WHERE id = ?', [id], async (err, server) => {
+    if (err) {
+      logger.error('Error fetching MCP server for tool call', { error: err.message });
+      return res.status(500).json({ error: 'Fehler beim Laden des Servers' });
+    }
+    
+    if (!server) {
+      return res.status(404).json({ error: 'Server nicht gefunden' });
+    }
+    
+    try {
+      const config = JSON.parse(server.config || '{}');
+      let result = null;
+      
+      if (server.type === 'sse' || server.type === 'http-stream') {
+        // Call tool via HTTP
+        const response = await fetch(`${config.endpoint}/tools/${toolName}/call`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ arguments: toolArgs })
+        });
+        
+        if (response.ok) {
+          result = await response.json();
+        } else {
+          throw new Error(`Tool call failed: ${response.statusText}`);
+        }
+      } else {
+        // For STDIO, we'd need to implement process communication
+        throw new Error('STDIO tool calls not yet implemented');
+      }
+      
+      // Log tool call
+      db.run(`
+        INSERT INTO tool_calls (tool_name, server_id, arguments, result, created_at) 
+        VALUES (?, ?, ?, ?, datetime('now'))
+      `, [toolName, id, JSON.stringify(toolArgs), JSON.stringify(result)], (err) => {
+        if (err) {
+          logger.error('Error logging tool call', { error: err.message });
+        }
+      });
+      
+      logger.info('MCP tool called successfully', { server_id: id, tool_name: toolName });
+      res.json({ success: true, result });
+      
+    } catch (error) {
+      logger.error('Error calling MCP tool', { error: error.message, server_id: id, tool_name: toolName });
+      res.status(500).json({ error: `Fehler beim Aufrufen des Tools: ${error.message}` });
+    }
+  });
+});
+
+app.delete('/api/mcp/servers/:id', auth.authenticateToken, (req, res) => {
+  const { id } = req.params;
+  
+  db.run('DELETE FROM mcp_servers WHERE id = ?', [id], function(err) {
+    if (err) {
+      logger.error('Error deleting MCP server', { error: err.message, server_id: id });
+      return res.status(500).json({ error: 'Fehler beim Löschen des Servers' });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Server nicht gefunden' });
+    }
+    
+    logger.info('MCP server deleted', { server_id: id });
+    res.json({ success: true });
+  });
+});
+
+// Helper function to create MCP servers table
+function createMCPServersTable(callback) {
+  console.log('🔧 Creating/checking MCP servers table...');
+  
+  db.run(`
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      config TEXT NOT NULL,
+      status TEXT DEFAULT 'disconnected',
+      capabilities TEXT DEFAULT '{}',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `, (err) => {
+    if (err) {
+      console.error('❌ Error creating mcp_servers table:', err.message);
+      logger.error('Error creating mcp_servers table', { error: err.message });
+    } else {
+      console.log('✅ MCP servers table created or verified');
+      logger.info('MCP servers table created or already exists');
+    }
+    
+    // Also create tool_calls table if it doesn't exist
+    db.run(`
+      CREATE TABLE IF NOT EXISTS tool_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool_name TEXT NOT NULL,
+        server_id INTEGER,
+        arguments TEXT,
+        result TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES mcp_servers (id) ON DELETE CASCADE
+      )
+    `, (err) => {
+      if (err) {
+        console.error('❌ Error creating tool_calls table:', err.message);
+        logger.error('Error creating tool_calls table', { error: err.message });
+      } else {
+        console.log('✅ Tool calls table created or verified');
+        logger.info('Tool calls table created or already exists');
+      }
+      if (callback) callback();
+    });
+  });
+}
+
+// Initialize MCP tables on startup
+console.log('🚀 Initializing MCP tables on startup...');
+createMCPServersTable();
+
+// Add debug middleware for MCP routes
+app.use('/api/mcp/*', (req, res, next) => {
+  console.log(`🔍 MCP Route: ${req.method} ${req.path}`);
+  console.log(`🔍 Headers:`, req.headers.authorization ? 'Has auth token' : 'No auth token');
+  next();
+});
+
 // Error handling
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpunkt nicht gefunden' });
@@ -1261,6 +1609,11 @@ const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`🚀 MCP Chat Backend (Simplified) started on port ${PORT}`);
+  console.log('📡 Available MCP endpoints:');
+  console.log('   GET    /api/mcp/servers');
+  console.log('   POST   /api/mcp/servers');
+  console.log('   POST   /api/mcp/servers/:id/connect');
+  console.log('   DELETE /api/mcp/servers/:id');
   logger.info('MCP Chat Backend gestartet', { port: PORT });
 });
 

@@ -236,7 +236,6 @@ function App() {
     conversationId: activeConversation?.id || 0,
     enabled: streamingEnabled,
     onChunk: (content: string) => {
-      console.log('SSE chunk received:', content);
       setStreamingMessage(prev => prev + content);
       setIsStreaming(true);
     },
@@ -253,7 +252,6 @@ function App() {
             created_at: new Date().toISOString()
           };
           setMessages(prev => [...prev, newMessage]);
-          console.log('Added streamed message to messages:', newMessage);
         }
         return ''; // Clear streaming message
       });
