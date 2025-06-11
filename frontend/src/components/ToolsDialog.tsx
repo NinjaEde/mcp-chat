@@ -132,7 +132,7 @@ export default function ToolsDialog({ tools, onClose, onToolsChange }: ToolsDial
           </h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
           >
             ✕
           </button>
@@ -298,21 +298,21 @@ export default function ToolsDialog({ tools, onClose, onToolsChange }: ToolsDial
                     <div className="flex items-center space-x-2 ml-4">
                       <button
                         onClick={() => updateTool(tool.id, { is_active: !tool.is_active })}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
                         title={tool.is_active ? 'Deaktivieren' : 'Aktivieren'}
                       >
                         {tool.is_active ? <Pause size={16} /> : <Play size={16} />}
                       </button>
                       <button
                         onClick={() => setEditingTool(tool)}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
                         title="Bearbeiten"
                       >
                         <Edit size={16} />
                       </button>
                       <button
                         onClick={() => deleteTool(tool.id)}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-red-600"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-red-700 dark:hover:bg-gray-700  dark:hover:text-red-300 text-red-600 dark:text-red-400 transition-colors"
                         title="Löschen"
                       >
                         <Trash2 size={16} />

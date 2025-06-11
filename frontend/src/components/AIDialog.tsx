@@ -330,7 +330,7 @@ export default function AIDialog({ aiConnections, onClose, onAIConnectionsChange
           </h2>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
           >
             ✕
           </button>
@@ -533,7 +533,7 @@ export default function AIDialog({ aiConnections, onClose, onAIConnectionsChange
                     <div className="flex items-center space-x-2 ml-4">
                       <button
                         onClick={() => testAIConnection(ai.id)}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
                         title="Verbindung testen"
                       >
                         <Link2 size={16} />
@@ -541,7 +541,7 @@ export default function AIDialog({ aiConnections, onClose, onAIConnectionsChange
                       {ai.provider === 'ollama' && ai.status === 'connected' && (
                         <button
                           onClick={() => loadAvailableModels(ai.id)}
-                          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          className="p-1 rounded hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
                           title="Modelle laden"
                         >
                           <Package size={16} />
@@ -549,14 +549,14 @@ export default function AIDialog({ aiConnections, onClose, onAIConnectionsChange
                       )}
                       <button
                         onClick={() => setEditingAI(ai)}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-blue-700 dark:hover:bg-gray-700  dark:hover:text-blue-300 text-gray-600 dark:text-gray-400 transition-colors"
                         title="Bearbeiten"
                       >
                         <Edit size={16} />
                       </button>
                       <button
                         onClick={() => deleteAIConnection(ai.id)}
-                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-red-600"
+                        className="p-1 rounded hover:bg-gray-100 hover:text-red-700 dark:hover:bg-gray-700  dark:hover:text-red-300 text-red-600 dark:text-red-400 transition-colors"
                         title="Löschen"
                       >
                         <Trash2 size={16} />
