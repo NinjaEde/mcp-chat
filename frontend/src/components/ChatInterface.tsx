@@ -276,7 +276,7 @@ export default function ChatInterface({ conversationId, aiConnectionId, model }:
                       const match = /language-(\w+)/.exec(className || '');
                       return !inline && match ? (
                         <SyntaxHighlighter
-                          style={tomorrow}
+                          style={solarizedlight}
                           language={match[1]}
                           PreTag="div"
                           {...props}
