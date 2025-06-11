@@ -1,0 +1,63 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+        - linux/amd64
+    ports:
+      - "3001:3001"
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      # Production CORS configuration
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://frontend:80,http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://frontend:80}
+      # Security settings
+      - JWT_SECRET=${JWT_SECRET:-change_this_in_production}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-12h}
+      # Database
+      - DB_PATH=/app/data/mcpchat.db
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+        - linux/amd64
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      - NODE_ENV=production
+      # API URL configuration
+      - VITE_API_URL=${VITE_API_URL:-http://backend:3001/api}
+      # App configuration
+      - VITE_APP_NAME=${VITE_APP_NAME:-MCP Chat}
+      - VITE_DEBUG=false
+      - VITE_LOG_LEVEL=warn
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  default:
+    name: mcp-chat-network

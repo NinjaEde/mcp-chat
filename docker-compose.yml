@@ -1,0 +1,40 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+      - ./backend/database:/app/database
+      - ./backend/logs:/app/logs
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      # Dynamic CORS configuration
+      - ALLOWED_ORIGINS=http://frontend:5173,http://localhost:3002,http://localhost:5173
+      - FRONTEND_URL=http://frontend:5173
+      # JWT and database config
+      - JWT_SECRET=dev_docker_secret_change_in_production
+      - DB_PATH=/app/database/mcpchat.db
+  
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    ports:
+      - "3002:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      # Dynamic API URL pointing to backend service
+      - VITE_API_URL=http://backend:3001/api
+    depends_on:
+      - backend
