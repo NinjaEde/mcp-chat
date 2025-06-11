@@ -533,12 +533,16 @@ class MCPClientService {
         type: server.protocol, // Map protocol to type
         config: {
           protocol: server.protocol,
-          ...(server.command && server.command.length > 0 && { command: server.command }),
-          ...(server.args && server.args.length > 0 && { args: server.args }),
-          ...(server.env && Object.keys(server.env).length > 0 && { env: server.env }),
-          ...(server.endpoint && { endpoint: server.endpoint })
+          // Only include command/args/env for STDIO servers
+          ...(server.protocol === 'stdio' && server.command && server.command.length > 0 && { command: server.command }),
+          ...(server.protocol === 'stdio' && server.args && server.args.length > 0 && { args: server.args }),
+          ...(server.protocol === 'stdio' && server.env && Object.keys(server.env).length > 0 && { env: server.env }),
+          // Include endpoint for SSE and HTTP-stream servers
+          ...((server.protocol === 'sse' || server.protocol === 'http-stream') && server.endpoint && { endpoint: server.endpoint })
         }
       };
+
+      console.log('🔧 Sending server data to backend:', JSON.stringify(backendServerData, null, 2));
 
       const response = await this.apiRequest('/api/mcp/servers', {
         method: 'POST',
@@ -548,26 +552,35 @@ class MCPClientService {
       if (!response.ok) {
         const contentType = response.headers.get('content-type');
         let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        let fullErrorDetails = '';
         
         if (contentType && contentType.includes('application/json')) {
           try {
             const errorData = await response.json();
+            console.error('❌ Backend error response:', errorData);
             errorMessage = errorData.error || errorMessage;
+            fullErrorDetails = JSON.stringify(errorData, null, 2);
           } catch (e) {
-            // Failed to parse error as JSON
+            console.error('❌ Failed to parse JSON error response:', e);
           }
         } else {
           const errorText = await response.text();
-          console.error('Non-JSON error response:', errorText.substring(0, 200));
+          console.error('❌ Non-JSON error response:', errorText);
+          fullErrorDetails = errorText;
           if (errorText.includes('<!DOCTYPE')) {
             errorMessage = 'Server returned HTML instead of JSON - endpoint may not exist';
+          } else {
+            errorMessage = `${errorMessage}: ${errorText.substring(0, 200)}`;
           }
         }
         
+        console.error('❌ Full error details:', fullErrorDetails);
         throw new Error(errorMessage);
       }
       
       const data = await response.json();
+      console.log('✅ Server created successfully:', data);
+      
       if (!data.success) {
         throw new Error(data.error || 'Unknown error');
       }
@@ -858,3 +871,4 @@ class MCPClientService {
 }
 
 export const mcpClient = new MCPClientService();
+

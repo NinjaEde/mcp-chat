@@ -1295,29 +1295,55 @@ app.post('/api/mcp/servers', auth.authenticateToken, (req, res) => {
   }
 
   // Validate config based on type
-  if (type === 'stdio' && (!config.command || !Array.isArray(config.command))) {
-    console.log('❌ Invalid STDIO config:', config);
-    return res.status(400).json({ error: 'STDIO Server benötigt ein command Array' });
+  if (type === 'stdio') {
+    if (!config.command || !Array.isArray(config.command) || config.command.length === 0) {
+      console.log('❌ Invalid STDIO config - missing or empty command:', config);
+      return res.status(400).json({ error: 'STDIO Server benötigt ein nicht-leeres command Array' });
+    }
   }
   
-  if ((type === 'sse' || type === 'http-stream') && !config.endpoint) {
-    console.log('❌ Invalid SSE/HTTP-stream config:', config);
-    return res.status(400).json({ error: `${type} Server benötigt eine endpoint URL` });
+  if ((type === 'sse' || type === 'http-stream')) {
+    if (!config.endpoint || config.endpoint.trim() === '') {
+      console.log('❌ Invalid SSE/HTTP-stream config - missing endpoint:', config);
+      return res.status(400).json({ error: `${type} Server benötigt eine endpoint URL` });
+    }
   }
   
   // Ensure table exists first
-  createMCPServersTable(() => {
+  createMCPServersTable((err) => {
+    if (err) {
+      console.error('❌ Table creation failed before insert:', err.message);
+      return res.status(500).json({ error: 'Fehler bei der Datenbankinitialisierung' });
+    }
+    
     const configJson = JSON.stringify(config);
     console.log('💾 Saving MCP server to database...');
+    console.log('📋 Final config JSON:', configJson);
+    console.log('📋 Values to insert:', { name, type, configJson });
     
     db.run(`
       INSERT INTO mcp_servers (name, type, config, status, created_at) 
       VALUES (?, ?, ?, 'disconnected', datetime('now'))
     `, [name, type, configJson], function(err) {
       if (err) {
-        console.error('❌ Error creating MCP server:', err.message);
-        logger.error('Error creating MCP server', { error: err.message });
-        return res.status(500).json({ error: 'Fehler beim Erstellen des MCP Servers' });
+        console.error('❌ Database error creating MCP server:', err.message);
+        console.error('❌ Error code:', err.code);
+        console.error('❌ SQL state:', err.errno);
+        console.error('❌ Full error object:', err);
+        logger.error('Error creating MCP server', { 
+          error: err.message, 
+          code: err.code,
+          errno: err.errno,
+          stack: err.stack,
+          name, 
+          type, 
+          config 
+        });
+        return res.status(500).json({ 
+          error: 'Fehler beim Erstellen des MCP Servers',
+          details: `Database error: ${err.message}`,
+          code: err.code
+        });
       }
       
       console.log('✅ MCP server created with ID:', this.lastID);
@@ -1328,6 +1354,11 @@ app.post('/api/mcp/servers', auth.authenticateToken, (req, res) => {
           console.error('❌ Error fetching created MCP server:', err.message);
           logger.error('Error fetching created MCP server', { error: err.message });
           return res.status(500).json({ error: 'MCP Server erstellt, aber Fehler beim Laden' });
+        }
+        
+        if (!server) {
+          console.error('❌ Server not found after creation with ID:', this.lastID);
+          return res.status(500).json({ error: 'Server nach Erstellung nicht gefunden' });
         }
         
         const formattedServer = {
@@ -1541,6 +1572,42 @@ app.delete('/api/mcp/servers/:id', auth.authenticateToken, (req, res) => {
 function createMCPServersTable(callback) {
   console.log('🔧 Creating/checking MCP servers table...');
   
+  // First, check if table exists and get its structure
+  db.all("PRAGMA table_info(mcp_servers)", (err, columns) => {
+    if (err) {
+      console.error('❌ Error checking table info:', err.message);
+      if (callback) callback(err);
+      return;
+    }
+    
+    console.log('📋 Current mcp_servers table columns:', columns.map(col => col.name));
+    
+    // Check if type column exists
+    const hasTypeColumn = columns.some(col => col.name === 'type');
+    
+    if (columns.length > 0 && !hasTypeColumn) {
+      console.log('⚠️ Table exists but missing type column. Recreating table...');
+      
+      // Drop the old table and recreate it
+      db.run('DROP TABLE IF EXISTS mcp_servers', (err) => {
+        if (err) {
+          console.error('❌ Error dropping old table:', err.message);
+          if (callback) callback(err);
+          return;
+        }
+        console.log('🗑️ Old mcp_servers table dropped');
+        createTableWithCorrectSchema(callback);
+      });
+    } else {
+      // Table doesn't exist or has correct structure
+      createTableWithCorrectSchema(callback);
+    }
+  });
+}
+
+function createTableWithCorrectSchema(callback) {
+  console.log('🏗️ Creating mcp_servers table with correct schema...');
+  
   db.run(`
     CREATE TABLE IF NOT EXISTS mcp_servers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1554,10 +1621,33 @@ function createMCPServersTable(callback) {
   `, (err) => {
     if (err) {
       console.error('❌ Error creating mcp_servers table:', err.message);
+      console.error('❌ Full table creation error:', err);
       logger.error('Error creating mcp_servers table', { error: err.message });
+      if (callback) callback(err);
+      return;
     } else {
-      console.log('✅ MCP servers table created or verified');
+      console.log('✅ MCP servers table created or verified with correct schema');
       logger.info('MCP servers table created or already exists');
+      
+      // Test if table works by running a simple query
+      db.get("SELECT COUNT(*) as count FROM mcp_servers", (err, result) => {
+        if (err) {
+          console.error('❌ Error testing mcp_servers table:', err.message);
+          if (callback) callback(err);
+          return;
+        }
+        console.log('✅ MCP servers table test successful, current count:', result.count);
+        
+        // Verify the schema is correct
+        db.all("PRAGMA table_info(mcp_servers)", (err, columns) => {
+          if (err) {
+            console.error('❌ Error verifying table schema:', err.message);
+            if (callback) callback(err);
+            return;
+          }
+          console.log('✅ Verified table schema:', columns.map(col => `${col.name}(${col.type})`).join(', '));
+        });
+      });
     }
     
     // Also create tool_calls table if it doesn't exist
@@ -1579,29 +1669,32 @@ function createMCPServersTable(callback) {
         console.log('✅ Tool calls table created or verified');
         logger.info('Tool calls table created or already exists');
       }
-      if (callback) callback();
+      if (callback) callback(err);
     });
   });
 }
 
 // Initialize MCP tables on startup
 console.log('🚀 Initializing MCP tables on startup...');
-createMCPServersTable();
-
-// Add debug middleware for MCP routes
-app.use('/api/mcp/*', (req, res, next) => {
-  console.log(`🔍 MCP Route: ${req.method} ${req.path}`);
-  console.log(`🔍 Headers:`, req.headers.authorization ? 'Has auth token' : 'No auth token');
-  next();
+createMCPServersTable((err) => {
+  if (err) {
+    console.error('❌ Failed to initialize MCP tables:', err.message);
+  } else {
+    console.log('✅ MCP tables initialized successfully');
+  }
 });
 
 // Error handling
-app.use((req, res) => {
+app.use((req, res, next) => {
+  // Check if this is an API route that should exist
+  if (req.path.startsWith('/api/')) {
+    console.log(`❌ Unhandled API route: ${req.method} ${req.path}`);
+  }
   res.status(404).json({ error: 'Endpunkt nicht gefunden' });
 });
 
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', { error: err.message });
+  logger.error('Unhandled error', { error: err.message, stack: err.stack });
   res.status(500).json({ error: 'Interner Serverfehler' });
 });
 
