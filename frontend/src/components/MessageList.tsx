@@ -58,7 +58,15 @@ const MessageList: React.FC<MessageListProps> = ({
               isUser ? 'text-blue-100' : 'text-gray-500 dark:text-gray-400'
             }`}
           >
-            {isUser ? 'Du' : 'AI'} • {formatTime(message.created_at || '')}
+            {isUser ? (
+              <>
+              <User className="inline w-4 h-4 mr-1 align-text-bottom" /> Du
+              </>
+            ) : (
+              <>
+              <Bot className="inline w-4 h-4 mr-1 align-text-bottom" /> AI
+              </>
+            )} • {formatTime(message.created_at || '')}
           </div>
 
           {/* Message content */}
@@ -285,7 +293,7 @@ const MessageList: React.FC<MessageListProps> = ({
         <div className="flex justify-start mb-4">
           <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white">
             <div className="flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <Loader2 className="inline w-4 h-4 animate-spin text-blue-600" />
               <span>KI denkt nach...</span>
             </div>
           </div>
