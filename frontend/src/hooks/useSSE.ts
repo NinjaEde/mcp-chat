@@ -66,7 +66,6 @@ export function useSSE({ conversationId, onChunk, onComplete, onError, enabled =
       eventSource.onmessage = (event) => {
         try {
           const data: SSEMessage = JSON.parse(event.data);
-          console.log('SSE message received:', data);
           
           switch (data.type) {
             case 'connected':
