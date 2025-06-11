@@ -407,6 +407,8 @@ function App() {
           aiConnections={aiConnections}
           selectedAIConnection={selectedAIConnection}
           setSelectedAIConnection={setSelectedAIConnection}
+          darkMode={darkMode}
+          setDarkMode={setDarkMode}
         />
       )}
 

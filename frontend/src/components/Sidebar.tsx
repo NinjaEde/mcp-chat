@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, LogOut, Wrench, Bot } from 'lucide-react';
+import { Settings, LogOut, Wrench, Bot, Sun, Moon, Plus } from 'lucide-react';
 import type { Conversation, AIConnection } from '../App';
 
 interface SidebarProps {
@@ -16,6 +16,8 @@ interface SidebarProps {
   aiConnections: AIConnection[];
   selectedAIConnection: number | null;
   setSelectedAIConnection: (id: number | null) => void;
+  darkMode: boolean;
+  setDarkMode: (darkMode: boolean) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -31,6 +33,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   aiConnections,
   selectedAIConnection,
   setSelectedAIConnection,
+  darkMode,
+  setDarkMode,
 }) => (
   <div className="w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
     <div className="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -39,14 +43,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center space-x-2">
           <button
             onClick={showSettings}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg transition-colors
+              hover:bg-gray-100 hover:text-blue-700
+              dark:hover:bg-gray-700 dark:hover:text-blue-300
+              text-gray-600 dark:text-gray-400"
             title="Einstellungen"
           >
             <Settings size={20} />
           </button>
           <button
             onClick={handleLogout}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg transition-colors
+              hover:bg-gray-100 hover:text-blue-700
+              dark:hover:bg-gray-700 dark:hover:text-blue-300
+              text-gray-600 dark:text-gray-400"
             title="Abmelden"
           >
             <LogOut size={20} />
@@ -91,20 +101,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-4">
         <button
           onClick={() => createConversation()}
-          className="w-full p-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-medium"
+          className="w-full flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-medium"
         >
-          + Neue Unterhaltung
+          <Plus className="w-4 h-4" />
+          Neue Unterhaltung
         </button>
       </div>
       <div className="px-4 space-y-2">
         {conversations.map(conversation => (
           <div
             key={conversation.id}
-            className={`w-full p-3 rounded-lg transition-colors flex items-center justify-between group ${
-              activeConversation?.id === conversation.id
+            className={`w-full p-3 rounded-lg transition-colors flex items-center justify-between group ${activeConversation?.id === conversation.id
                 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-            }`}
+              }`}
           >
             <button
               onClick={() => selectConversation(conversation)}
@@ -128,6 +138,26 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         ))}
       </div>
+    </div>
+    {/* Footer with controls */}
+    <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
+      {/* Dark Mode Toggle */}
+      <button
+        onClick={() => setDarkMode(!darkMode)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+      >
+        {darkMode ? (
+          <>
+            <Sun className="h-4 w-4" />
+            Light Mode
+          </>
+        ) : (
+          <>
+            <Moon className="h-4 w-4" />
+            Dark Mode
+          </>
+        )}
+      </button>
     </div>
   </div>
 );

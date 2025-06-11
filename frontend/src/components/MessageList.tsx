@@ -213,7 +213,7 @@ const MessageList: React.FC<MessageListProps> = ({
           </p>
           <button
             onClick={() => createConversation()}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-medium"
           >
             <Plus className="w-4 h-4" />
             Neue Unterhaltung starten

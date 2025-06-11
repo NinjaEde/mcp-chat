@@ -22,9 +22,24 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       {!showSidebar && (
         <button
           onClick={() => setShowSidebar(true)}
-          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          className="p-2 rounded-lg transition-colors
+              hover:bg-gray-100 hover:text-blue-700
+              dark:hover:bg-gray-700 dark:hover:text-blue-300
+              text-gray-600 dark:text-gray-400"
         >
           <Menu size={20} />
+        </button>
+      )}
+      {showSidebar && (
+        <button
+          onClick={() => setShowSidebar(false)}
+          className="p-2 rounded-lg transition-colors
+              hover:bg-gray-100 hover:text-blue-700
+              dark:hover:bg-gray-700 dark:hover:text-blue-300
+              text-gray-600 dark:text-gray-400"
+          title="Sidebar ausblenden"
+        >
+          <ChevronLeft size={20} />
         </button>
       )}
       <div>
@@ -39,15 +54,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       </div>
     </div>
     <div className="flex items-center space-x-2">
-      {showSidebar && (
-        <button
-          onClick={() => setShowSidebar(false)}
-          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          title="Sidebar ausblenden"
-        >
-          <ChevronLeft size={20} />
-        </button>
-      )}
+
     </div>
   </div>
 );
