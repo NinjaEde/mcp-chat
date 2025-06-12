@@ -498,23 +498,37 @@ class MCPClientService {
       const data = await response.json();
       const savedServers = data.servers || [];
       
+      console.log('📡 Loaded servers from backend:', savedServers.length);
+      
+      // Clear existing servers and rebuild from backend data
+      this.servers.clear();
+      
       // Transform backend server format to frontend MCPServer format
       savedServers.forEach((backendServer: any) => {
         const mcpServer: MCPServer = {
-          id: backendServer.id.toString(),
+          id: backendServer.id.toString(), // Ensure ID is string
           name: backendServer.name,
           protocol: backendServer.config.protocol || backendServer.type,
-          status: 'disconnected',
+          status: backendServer.status || 'disconnected',
           command: backendServer.config.command || [],
           args: backendServer.config.args || [],
           env: backendServer.config.env || {},
-          endpoint: backendServer.config.endpoint
+          endpoint: backendServer.config.endpoint,
+          capabilities: backendServer.capabilities ? 
+            (typeof backendServer.capabilities === 'string' ? 
+              JSON.parse(backendServer.capabilities) : 
+              backendServer.capabilities) : 
+            undefined,
+          lastConnected: backendServer.last_connected,
+          tools: [] // Will be populated by fetchServerCapabilities if connected
         };
         
+        console.log(`📋 Loaded server: ${mcpServer.name} (ID: ${mcpServer.id}, Status: ${mcpServer.status})`);
         this.servers.set(mcpServer.id, mcpServer);
       });
       
       this.notifyListeners();
+      console.log('✅ Server loading completed, total servers:', this.servers.size);
     } catch (error) {
       console.error('Error loading saved servers:', error);
     }
@@ -612,40 +626,110 @@ class MCPClientService {
     this.notifyListeners();
 
     try {
+      console.log(`🔌 Starting connection to ${server.name} via ${server.protocol}`);
+      
+      // First, try to connect via backend API (this is the working approach)
       const response = await this.apiRequest(`/api/mcp/servers/${server.id}/connect`, {
         method: 'POST'
       });
       
-      if (response.ok) {
-        const data = await response.json();
-        server.status = data.connected ? 'connected' : 'error';
-        server.capabilities = data.capabilities;
-        
-        if (data.connected) {
-          server.lastConnected = new Date().toISOString();
-          server.reconnectAttempts = 0;
-          
-          // Extract tools from capabilities
-          if (data.capabilities && data.capabilities.tools) {
-            server.tools = Array.isArray(data.capabilities.tools) 
-              ? data.capabilities.tools 
-              : [];
-          }
-        }
-      } else {
-        server.status = 'error';
-        server.error = 'Connection test failed';
+      if (!response.ok) {
+        throw new Error(`Backend connection failed: ${response.statusText}`);
       }
+      
+      const connectionResult = await response.json();
+      console.log(`✅ Backend connection result for ${server.name}:`, connectionResult);
+      
+      if (!connectionResult.connected) {
+        throw new Error('Server connection failed on backend');
+      }
+      
+      // Update server with backend results
+      server.status = 'connected';
+      server.lastConnected = new Date().toISOString();
+      server.reconnectAttempts = 0;
+      server.capabilities = connectionResult.capabilities || {};
+      
+      // Try to establish frontend MCP connection as secondary step (optional)
+      try {
+        console.log(`🔄 Attempting direct MCP connection to ${server.name}`);
+        await this.establishDirectMCPConnection(server);
+      } catch (directError) {
+        console.warn(`⚠️ Direct MCP connection failed for ${server.name}, using backend API only:`, directError.message);
+        // Don't fail the whole connection - backend API works
+      }
+      
     } catch (error) {
+      console.error(`❌ Connection failed for ${server.name}:`, error);
       server.status = 'error';
       server.error = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Clean up any partial connections
+      this.connections.delete(server.id);
     }
     
     this.servers.set(server.id, server);
     this.notifyListeners();
   }
 
+  private async establishDirectMCPConnection(server: MCPServer): Promise<void> {
+    // Only try direct connections for supported protocols
+    if (server.protocol === 'sse' && server.endpoint) {
+      console.log(`🔗 Establishing direct SSE connection to ${server.endpoint}`);
+      
+      // Create connection
+      const connection = new SSEConnection(server.endpoint);
+      
+      // Set up error handling BEFORE attempting connection
+      connection.onError((error) => {
+        console.warn(`⚠️ Direct SSE connection error for ${server.name}:`, error.message);
+        // Don't update server status to error - backend connection still works
+      });
+      
+      connection.onClose(() => {
+        console.log(`📤 Direct SSE connection closed for ${server.name}`);
+        this.connections.delete(server.id);
+      });
+      
+      try {
+        // Try to connect with timeout
+        await Promise.race([
+          connection.connect(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection timeout')), 10000)
+          )
+        ]);
+        
+        console.log(`✅ Direct SSE connection established for ${server.name}`);
+        
+        // Store connection for direct communication
+        this.connections.set(server.id, connection);
+        
+        // Try to initialize MCP protocol
+        try {
+          await this.initializeMCPConnection(server.id, connection);
+          await this.fetchServerCapabilities(server.id);
+          console.log(`🎉 Full MCP protocol initialized for ${server.name}`);
+        } catch (mcpError) {
+          console.warn(`⚠️ MCP protocol initialization failed for ${server.name}:`, mcpError.message);
+          // Keep the connection but mark initialization as failed
+        }
+        
+      } catch (connectionError) {
+        console.warn(`⚠️ Direct connection failed for ${server.name}:`, connectionError.message);
+        throw connectionError;
+      }
+    } else if (server.protocol === 'stdio') {
+      console.log(`🔗 STDIO connections require backend process management for ${server.name}`);
+      // STDIO connections are handled by backend - no direct frontend connection possible
+    } else {
+      console.log(`🔗 Protocol ${server.protocol} not supported for direct connections`);
+    }
+  }
+
   private async initializeMCPConnection(serverId: string, connection: MCPConnection): Promise<void> {
+    console.log(`🔌 Initializing MCP connection for server: ${serverId}`);
+    
     // Send initialize request
     const initializeResult = await (connection as any).sendRequest('initialize', {
       protocolVersion: '2024-11-05',
@@ -664,6 +748,7 @@ class MCPClientService {
     if (server) {
       server.capabilities = initializeResult.capabilities;
       this.servers.set(serverId, server);
+      console.log(`✅ MCP initialized for ${server.name}:`, initializeResult.capabilities);
     }
 
     // Send initialized notification
@@ -671,44 +756,72 @@ class MCPClientService {
       jsonrpc: '2.0',
       method: 'notifications/initialized'
     });
+    
+    console.log(`🎉 MCP connection fully initialized for server: ${serverId}`);
   }
 
   private async fetchServerCapabilities(serverId: string): Promise<void> {
     const connection = this.connections.get(serverId);
     const server = this.servers.get(serverId);
     
-    if (!connection || !server) return;
+    if (!connection || !server) {
+      console.warn(`Cannot fetch capabilities: missing connection or server for ${serverId}`);
+      return;
+    }
 
     try {
+      console.log(`🔍 Fetching capabilities for ${server.name}...`);
+      
       // Fetch tools
       if (server.capabilities?.tools) {
-        const toolsResult = await (connection as any).sendRequest('tools/list');
-        server.tools = toolsResult.tools || [];
+        try {
+          const toolsResult = await (connection as any).sendRequest('tools/list');
+          server.tools = toolsResult.tools || [];
+          console.log(`📋 Found ${server.tools.length} tools for ${server.name}`);
+        } catch (error) {
+          console.warn(`Failed to fetch tools for ${server.name}:`, error);
+          server.tools = [];
+        }
       }
 
       // Fetch resources
       if (server.capabilities?.resources) {
-        const resourcesResult = await (connection as any).sendRequest('resources/list');
-        server.resources = resourcesResult.resources || [];
+        try {
+          const resourcesResult = await (connection as any).sendRequest('resources/list');
+          server.resources = resourcesResult.resources || [];
+          console.log(`📁 Found ${server.resources.length} resources for ${server.name}`);
+        } catch (error) {
+          console.warn(`Failed to fetch resources for ${server.name}:`, error);
+          server.resources = [];
+        }
       }
 
       // Fetch prompts
       if (server.capabilities?.prompts) {
-        const promptsResult = await (connection as any).sendRequest('prompts/list');
-        server.prompts = promptsResult.prompts || [];
+        try {
+          const promptsResult = await (connection as any).sendRequest('prompts/list');
+          server.prompts = promptsResult.prompts || [];
+          console.log(`💬 Found ${server.prompts.length} prompts for ${server.name}`);
+        } catch (error) {
+          console.warn(`Failed to fetch prompts for ${server.name}:`, error);
+          server.prompts = [];
+        }
       }
 
       this.servers.set(serverId, server);
       this.notifyListeners();
       
-      console.log(`Fetched capabilities for ${server.name}:`, {
+      console.log(`✅ Capabilities fetched for ${server.name}:`, {
         tools: server.tools?.length || 0,
         resources: server.resources?.length || 0,
         prompts: server.prompts?.length || 0
       });
       
     } catch (error) {
-      console.error(`Error fetching capabilities for ${server.name}:`, error);
+      console.error(`❌ Error fetching capabilities for ${server.name}:`, error);
+      server.error = `Failed to fetch capabilities: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      this.servers.set(serverId, server);
+      this.notifyListeners();
     }
   }
 
@@ -716,17 +829,20 @@ class MCPClientService {
     const server = this.servers.get(serverId);
     if (!server) return;
 
+    console.error(`🔥 Connection error for ${server.name}:`, error);
     server.status = 'error';
     server.error = error.message;
     
     if (server.reconnectAttempts! < this.MAX_RECONNECT_ATTEMPTS) {
       server.reconnectAttempts = (server.reconnectAttempts || 0) + 1;
-      console.log(`Attempting to reconnect ${server.name} (attempt ${server.reconnectAttempts})`);
+      console.log(`🔄 Attempting to reconnect ${server.name} (attempt ${server.reconnectAttempts})`);
       
       // Wait before reconnecting (exponential backoff)
       setTimeout(() => {
         this.connectToServer(server);
       }, Math.pow(2, server.reconnectAttempts!) * 1000);
+    } else {
+      console.error(`❌ Max reconnection attempts reached for ${server.name}`);
     }
 
     this.servers.set(serverId, server);
@@ -736,7 +852,9 @@ class MCPClientService {
   private handleConnectionClose(serverId: string): void {
     const server = this.servers.get(serverId);
     if (server) {
+      console.log(`📤 Connection closed for ${server.name}`);
       server.status = 'disconnected';
+      server.error = undefined;
       this.servers.set(serverId, server);
       this.notifyListeners();
     }
@@ -750,6 +868,7 @@ class MCPClientService {
     
     if (connection) {
       try {
+        console.log(`🔌 Disconnecting ${server?.name}...`);
         await connection.close();
       } catch (error) {
         console.error('Error disconnecting MCP server:', error);
@@ -763,6 +882,15 @@ class MCPClientService {
       server.reconnectAttempts = 0;
       this.servers.set(serverId, server);
       this.notifyListeners();
+    }
+
+    // Also update backend
+    try {
+      await this.apiRequest(`/api/mcp/servers/${serverId}/disconnect`, {
+        method: 'POST'
+      });
+    } catch (error) {
+      console.warn('Failed to update backend disconnect status:', error);
     }
   }
 
@@ -788,7 +916,38 @@ class MCPClientService {
   }
 
   async callTool(serverId: string, toolName: string, toolArgs: Record<string, any>): Promise<any> {
+    const connection = this.connections.get(serverId);
+    const server = this.servers.get(serverId);
+    
+    if (!server) {
+      throw new Error(`Server ${serverId} not found`);
+    }
+
+    if (server.status !== 'connected') {
+      throw new Error(`Server ${server.name} is not connected (status: ${server.status})`);
+    }
+
+    // Try direct MCP connection first if available
+    if (connection) {
+      try {
+        console.log(`🔧 Calling tool ${toolName} on ${server.name} via direct connection...`);
+        
+        const result = await (connection as any).sendRequest('tools/call', {
+          name: toolName,
+          arguments: toolArgs
+        });
+        
+        console.log(`✅ Tool ${toolName} executed successfully on ${server.name} via direct connection`);
+        return result;
+        
+      } catch (error) {
+        console.warn(`⚠️ Direct tool call failed for ${toolName} on ${server.name}, falling back to HTTP API:`, error.message);
+      }
+    }
+    
+    // Fallback to HTTP API (this is the reliable approach)
     try {
+      console.log(`🔧 Calling tool ${toolName} on ${server.name} via HTTP API...`);
       const response = await this.apiRequest(`/api/mcp/servers/${serverId}/tools/${toolName}/call`, {
         method: 'POST',
         body: JSON.stringify({ arguments: toolArgs })
@@ -804,51 +963,104 @@ class MCPClientService {
         throw new Error(data.error || 'Tool call failed');
       }
       
+      console.log(`✅ Tool ${toolName} executed successfully on ${server.name} via HTTP API`);
       return data.result;
+      
     } catch (error) {
+      console.error(`❌ Tool call failed for ${toolName} on ${server.name}:`, error);
       throw new Error(`Tool call failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   async refreshTools(serverId: string): Promise<void> {
+    console.log(`🔄 RefreshTools called for server ID: ${serverId}`);
+    
+    const connection = this.connections.get(serverId);
+    const server = this.servers.get(serverId);
+    
+    if (!server) {
+      console.warn(`⚠️ Server ${serverId} not found for refresh`);
+      return;
+    }
+    
+    if (connection && server.status === 'connected') {
+      // Use direct MCP connection if available
+      console.log(`🔄 Refreshing tools via MCP connection for ${server.name}...`);
+      try {
+        await this.fetchServerCapabilities(serverId);
+        return;
+      } catch (error) {
+        console.warn(`⚠️ Direct MCP refresh failed, falling back to HTTP API:`, error.message);
+      }
+    }
+    
+    // Fallback to HTTP API (this is the working approach)
+    console.log(`🔄 Refreshing tools via HTTP API for server ${serverId}...`);
     try {
       const response = await this.apiRequest(`/api/mcp/servers/${serverId}/tools`);
       
       if (response.ok) {
         const data = await response.json();
-        const server = this.servers.get(serverId);
         if (server) {
+          const oldToolCount = server.tools?.length || 0;
           server.tools = data.tools || [];
+          
+          // Update status to connected if we got successful response
+          if (server.status === 'error' || server.status === 'disconnected') {
+            server.status = 'connected';
+            server.error = undefined;
+            server.lastConnected = new Date().toISOString();
+          }
+          
           this.servers.set(serverId, server);
           this.notifyListeners();
+          
+          console.log(`✅ Tools refreshed for ${server.name}: ${oldToolCount} -> ${server.tools.length} tools`);
         }
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Error refreshing tools:', error);
+      console.error(`❌ HTTP API refresh failed for ${server.name}:`, error);
+      // Update server error status
+      if (server) {
+        server.status = 'error';
+        server.error = error instanceof Error ? error.message : 'Failed to refresh tools';
+        this.servers.set(serverId, server);
+        this.notifyListeners();
+      }
+      throw error; // Re-throw to let caller handle
     }
   }
 
-  async getResource(serverId: string, uri: string): Promise<any> {
-    const connection = this.connections.get(serverId);
-    if (!connection) {
-      throw new Error(`No active connection for server: ${serverId}`);
+  // Add refresh method for frontend
+  async refreshServers(): Promise<void> {
+    console.log('🔄 Refreshing all servers...');
+    try {
+      // Reload servers from backend
+      await this.loadSavedServers();
+      
+      // Also refresh capabilities for connected servers
+      const connectedServers = Array.from(this.servers.values()).filter(s => 
+        s.status === 'connected' && this.connections.has(s.id)
+      );
+      
+      console.log(`🔍 Found ${connectedServers.length} connected servers to refresh capabilities`);
+      
+      for (const server of connectedServers) {
+        try {
+          console.log(`🔄 Refreshing capabilities for connected server: ${server.name}`);
+          await this.fetchServerCapabilities(server.id);
+        } catch (error) {
+          console.warn(`Failed to refresh capabilities for ${server.name}:`, error);
+        }
+      }
+      
+      console.log('✅ Server refresh completed');
+    } catch (error) {
+      console.error('❌ Server refresh failed:', error);
+      throw error;
     }
-
-    const result = await (connection as any).sendRequest('resources/read', { uri });
-    return result;
-  }
-
-  async getPrompt(serverId: string, name: string, promptArgs?: Record<string, any>): Promise<any> {
-    const connection = this.connections.get(serverId);
-    if (!connection) {
-      throw new Error(`No active connection for server: ${serverId}`);
-    }
-
-    const result = await (connection as any).sendRequest('prompts/get', { 
-      name, 
-      arguments: promptArgs || {} 
-    });
-    return result;
   }
 
   getServers(): MCPServer[] {

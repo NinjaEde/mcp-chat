@@ -31,8 +31,28 @@ export function useMCPServers() {
     await mcpClient.saveServer(server);
   }, []);
 
-  const deleteServer = useCallback(async (serverId: string) => {
-    await mcpClient.deleteServer(serverId);
+  const deleteServer = async (serverId: string) => {
+    console.log('🗑️ Hook: deleting server', serverId);
+    try {
+      await mcpClient.deleteServer(serverId);
+    } catch (error) {
+      console.error('Error in deleteServer hook:', error);
+      // Show user-friendly error message
+      if (error instanceof Error) {
+        alert(`Fehler beim Löschen des Servers: ${error.message}`);
+      }
+      throw error;
+    }
+  };
+
+  const refreshServers = useCallback(async () => {
+    console.log('🔄 Hook: refreshing all servers');
+    try {
+      await mcpClient.refreshServers();
+    } catch (error) {
+      console.error('Error in refreshServers hook:', error);
+      throw error;
+    }
   }, []);
 
   return {
@@ -42,7 +62,8 @@ export function useMCPServers() {
     disconnectServer,
     refreshTools,
     saveServer,
-    deleteServer
+    deleteServer,
+    refreshServers
   };
 }
 
